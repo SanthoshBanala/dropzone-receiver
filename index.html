@@ -1,0 +1,936 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>DropZone — Receive File</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com"/>
+  <link href="https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=Syne:wght@400;700;800&display=swap" rel="stylesheet"/>
+
+  <style>
+    /* ── Variables ─────────────────────────────────────────────────────── */
+    :root {
+      --bg:         #060A0D;
+      --surface:    #0C1219;
+      --border:     #162030;
+      --border-hi:  #1E3045;
+      --green:      #00E5A0;
+      --green-dim:  rgba(0,229,160,0.12);
+      --green-glow: rgba(0,229,160,0.35);
+      --blue:       #2AABFF;
+      --red:        #FF4545;
+      --text:       #D8E4EF;
+      --muted:      #4A6070;
+      --mono:       'Share Tech Mono', monospace;
+      --display:    'Syne', sans-serif;
+    }
+
+    /* ── Reset ─────────────────────────────────────────────────────────── */
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body { height: 100%; }
+
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: var(--mono);
+      min-height: 100vh;
+      overflow-x: hidden;
+      cursor: crosshair;
+    }
+
+    /* ── Animated background grid ──────────────────────────────────────── */
+    body::before {
+      content: '';
+      position: fixed; inset: 0; z-index: 0;
+      background-image:
+        linear-gradient(var(--border) 1px, transparent 1px),
+        linear-gradient(90deg, var(--border) 1px, transparent 1px);
+      background-size: 48px 48px;
+      animation: gridShift 30s linear infinite;
+      pointer-events: none;
+    }
+    @keyframes gridShift {
+      0%   { background-position: 0 0, 0 0; }
+      100% { background-position: 48px 48px, 48px 48px; }
+    }
+
+    body::after {
+      content: '';
+      position: fixed; inset: 0; z-index: 0;
+      background: radial-gradient(ellipse 80% 60% at 50% -10%, rgba(0,229,160,0.07) 0%, transparent 70%);
+      pointer-events: none;
+    }
+
+    /* ── Layout wrapper ────────────────────────────────────────────────── */
+    .app {
+      position: relative; z-index: 1;
+      min-height: 100vh;
+      display: flex; flex-direction: column;
+    }
+
+    /* ── Header ────────────────────────────────────────────────────────── */
+    header {
+      padding: 20px 28px;
+      display: flex; align-items: center; justify-content: space-between;
+      border-bottom: 1px solid var(--border);
+      animation: fadeDown 0.6s ease both;
+    }
+    .logo {
+      display: flex; align-items: center; gap: 10px;
+      font-family: var(--display);
+      font-size: 22px; font-weight: 800;
+      letter-spacing: 2px; color: var(--text);
+    }
+    .logo-hex {
+      width: 32px; height: 32px;
+      background: var(--green-dim);
+      border: 1.5px solid var(--green);
+      clip-path: polygon(50% 0%,100% 25%,100% 75%,50% 100%,0% 75%,0% 25%);
+      display: flex; align-items: center; justify-content: center;
+      animation: hexPulse 3s ease-in-out infinite;
+    }
+    @keyframes hexPulse {
+      0%,100% { box-shadow: 0 0 0 0 var(--green-glow); }
+      50%      { box-shadow: 0 0 20px 4px var(--green-glow); }
+    }
+    .logo span { color: var(--green); }
+    .header-tag {
+      font-size: 11px; color: var(--muted); letter-spacing: 2px;
+      border: 1px solid var(--border-hi); padding: 4px 10px; border-radius: 2px;
+    }
+
+    /* ── Main ──────────────────────────────────────────────────────────── */
+    main {
+      flex: 1;
+      display: flex; flex-direction: column;
+      align-items: center; justify-content: center;
+      padding: 32px 20px;
+      gap: 24px;
+    }
+
+    /* ── Screens ───────────────────────────────────────────────────────── */
+    .screen { display: none; flex-direction: column; align-items: center; gap: 20px; width: 100%; max-width: 480px; }
+    .screen.active { display: flex; animation: fadeUp 0.5s ease both; }
+
+    @keyframes fadeUp   { from { opacity:0; transform:translateY(16px); } to { opacity:1; transform:none; } }
+    @keyframes fadeDown { from { opacity:0; transform:translateY(-12px);} to { opacity:1; transform:none; } }
+    @keyframes fadeIn   { from { opacity:0; } to { opacity:1; } }
+
+    /* ── Card ──────────────────────────────────────────────────────────── */
+    .card {
+      width: 100%;
+      background: var(--surface);
+      border: 1px solid var(--border-hi);
+      border-radius: 6px;
+      padding: 28px 24px;
+      position: relative;
+      overflow: hidden;
+    }
+    .card::before {
+      content: '';
+      position: absolute; top: 0; left: 0; right: 0; height: 2px;
+      background: linear-gradient(90deg, transparent, var(--green), transparent);
+      opacity: 0.6;
+    }
+
+    /* ── Waiting screen ────────────────────────────────────────────────── */
+    .waiting-title {
+      font-family: var(--display); font-size: 28px; font-weight: 800;
+      color: var(--text); text-align: center; letter-spacing: 1px;
+    }
+    .waiting-title span { color: var(--green); }
+
+    .waiting-sub {
+      font-size: 12px; color: var(--muted); text-align: center;
+      letter-spacing: 1.5px; text-transform: uppercase;
+    }
+
+    /* QR container */
+    .qr-wrap {
+      position: relative;
+      background: #fff;
+      border-radius: 6px;
+      padding: 16px;
+      display: inline-block;
+      margin: 0 auto;
+    }
+    .qr-wrap canvas, .qr-wrap img { display: block; }
+
+    /* Corner decorations on QR */
+    .qr-corner {
+      position: absolute; width: 18px; height: 18px;
+      border-color: var(--green); border-style: solid;
+    }
+    .qr-corner.tl { top:-4px; left:-4px;  border-width: 3px 0 0 3px; }
+    .qr-corner.tr { top:-4px; right:-4px; border-width: 3px 3px 0 0; }
+    .qr-corner.bl { bottom:-4px; left:-4px;  border-width: 0 0 3px 3px; }
+    .qr-corner.br { bottom:-4px; right:-4px; border-width: 0 3px 3px 0; }
+
+    /* Session ID badge */
+    .session-badge {
+      background: var(--green-dim);
+      border: 1px solid var(--green);
+      border-radius: 4px;
+      padding: 10px 20px;
+      text-align: center;
+      width: 100%;
+    }
+    .session-badge .label { font-size: 10px; color: var(--muted); letter-spacing: 2px; margin-bottom: 4px; }
+    .session-badge .code  { font-size: 26px; color: var(--green); letter-spacing: 6px; font-weight: bold; }
+
+    /* Timer row */
+    .timer-row {
+      display: flex; align-items: center; justify-content: space-between;
+      width: 100%;
+    }
+    .timer-label { font-size: 11px; color: var(--muted); letter-spacing: 1px; }
+    .timer-value { font-size: 22px; color: var(--green); letter-spacing: 3px; font-weight: bold; transition: color 0.3s; }
+    .timer-value.warn { color: var(--red); animation: blink 1s step-start infinite; }
+    @keyframes blink { 50% { opacity: 0.4; } }
+
+    /* Progress bar */
+    .progress-track {
+      width: 100%; height: 3px;
+      background: var(--border-hi); border-radius: 2px; overflow: hidden;
+    }
+    .progress-fill {
+      height: 100%; background: var(--green);
+      border-radius: 2px;
+      transition: width 1s linear, background 0.3s;
+      box-shadow: 0 0 8px var(--green-glow);
+    }
+    .progress-fill.warn { background: var(--red); box-shadow: 0 0 8px rgba(255,69,69,0.5); }
+
+    /* Status dots */
+    .status-row {
+      display: flex; gap: 16px; width: 100%; flex-wrap: wrap;
+    }
+    .status-dot {
+      display: flex; align-items: center; gap: 8px;
+      font-size: 11px; color: var(--muted); letter-spacing: 1px;
+    }
+    .dot {
+      width: 8px; height: 8px; border-radius: 50%;
+      background: var(--border-hi); transition: background 0.3s;
+    }
+    .dot.on  { background: var(--green); box-shadow: 0 0 6px var(--green-glow); animation: dotPulse 2s ease-in-out infinite; }
+    .dot.off { background: var(--muted); }
+    @keyframes dotPulse { 0%,100% { opacity:1; } 50% { opacity:0.4; } }
+
+    /* ── Receiving screen ──────────────────────────────────────────────── */
+    .receive-title {
+      font-family: var(--display); font-size: 22px; font-weight: 800;
+      color: var(--green); text-align: center; letter-spacing: 1px;
+    }
+    .file-info-box {
+      display: flex; align-items: center; gap: 14px;
+      background: var(--bg); border: 1px solid var(--border-hi);
+      border-radius: 4px; padding: 14px 16px; width: 100%;
+    }
+    .file-ext-badge {
+      width: 48px; height: 48px; flex-shrink: 0;
+      background: var(--green-dim); border: 1px solid var(--green);
+      border-radius: 4px;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 11px; color: var(--green); font-weight: bold; letter-spacing: 1px;
+    }
+    .file-name { font-size: 14px; color: var(--text); word-break: break-all; }
+    .file-size { font-size: 11px; color: var(--muted); margin-top: 3px; }
+
+    .transfer-progress-wrap { width: 100%; }
+    .transfer-top {
+      display: flex; justify-content: space-between;
+      font-size: 12px; color: var(--muted); margin-bottom: 8px;
+    }
+    .transfer-pct { color: var(--green); font-size: 18px; font-weight: bold; }
+    .transfer-speed { color: var(--muted); }
+
+    .big-progress-track {
+      width: 100%; height: 8px;
+      background: var(--border-hi); border-radius: 4px; overflow: hidden;
+      position: relative;
+    }
+    .big-progress-fill {
+      height: 100%; background: var(--green); border-radius: 4px;
+      transition: width 0.3s ease;
+      box-shadow: 0 0 12px var(--green-glow);
+      position: relative; overflow: hidden;
+    }
+    .big-progress-fill::after {
+      content: '';
+      position: absolute; inset: 0;
+      background: linear-gradient(90deg, transparent 0%, rgba(255,255,255,0.25) 50%, transparent 100%);
+      animation: shimmer 1.5s linear infinite;
+    }
+    @keyframes shimmer { from { transform: translateX(-100%); } to { transform: translateX(100%); } }
+
+    .bytes-row {
+      display: flex; justify-content: space-between;
+      font-size: 11px; color: var(--muted); margin-top: 8px;
+    }
+
+    /* ── Done screen ───────────────────────────────────────────────────── */
+    .done-icon {
+      width: 80px; height: 80px; margin: 0 auto;
+      background: var(--green-dim); border: 2px solid var(--green);
+      border-radius: 50%;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 36px;
+      animation: popIn 0.5s cubic-bezier(0.175, 0.885, 0.32, 1.275) both;
+    }
+    @keyframes popIn { from { transform: scale(0); opacity:0; } to { transform: scale(1); opacity:1; } }
+
+    .done-title {
+      font-family: var(--display); font-size: 26px; font-weight: 800;
+      color: var(--green); text-align: center;
+    }
+    .done-sub { font-size: 12px; color: var(--muted); text-align: center; letter-spacing: 1px; }
+
+    .done-files { width: 100%; display: flex; flex-direction: column; gap: 8px; }
+    .done-file-row {
+      display: flex; align-items: center; justify-content: space-between;
+      background: var(--bg); border: 1px solid var(--border-hi);
+      border-radius: 4px; padding: 10px 14px;
+      animation: fadeIn 0.4s ease both;
+    }
+    .done-file-info { display: flex; flex-direction: column; gap: 2px; }
+    .done-file-name { font-size: 13px; color: var(--text); }
+    .done-file-size { font-size: 11px; color: var(--muted); }
+
+    /* ── Error / Expired screen ────────────────────────────────────────── */
+    .error-icon {
+      font-size: 52px; text-align: center; margin: 0 auto;
+      animation: popIn 0.4s ease both;
+    }
+    .error-title {
+      font-family: var(--display); font-size: 22px; font-weight: 800;
+      color: var(--red); text-align: center;
+    }
+    .error-msg { font-size: 13px; color: var(--muted); text-align: center; line-height: 1.7; }
+
+    /* ── Buttons ───────────────────────────────────────────────────────── */
+    .btn {
+      display: inline-flex; align-items: center; justify-content: center; gap: 8px;
+      padding: 13px 28px; border-radius: 4px; border: none;
+      font-family: var(--mono); font-size: 13px; letter-spacing: 1.5px;
+      cursor: pointer; transition: all 0.2s; text-decoration: none;
+      font-weight: bold;
+    }
+    .btn-primary {
+      background: var(--green); color: var(--bg);
+      box-shadow: 0 0 20px rgba(0,229,160,0.2);
+    }
+    .btn-primary:hover { transform: translateY(-2px); box-shadow: 0 4px 24px rgba(0,229,160,0.35); }
+    .btn-ghost {
+      background: transparent; color: var(--muted);
+      border: 1px solid var(--border-hi);
+    }
+    .btn-ghost:hover { border-color: var(--green); color: var(--green); }
+    .btn-full { width: 100%; }
+
+    /* ── Copy URL row ──────────────────────────────────────────────────── */
+    .url-row {
+      display: flex; gap: 8px; width: 100%;
+      background: var(--bg); border: 1px solid var(--border-hi);
+      border-radius: 4px; padding: 10px 12px; align-items: center;
+    }
+    .url-text {
+      flex: 1; font-size: 10px; color: var(--muted);
+      overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    }
+    .btn-copy {
+      background: var(--border-hi); color: var(--green); border: none;
+      padding: 4px 10px; border-radius: 2px; font-family: var(--mono);
+      font-size: 11px; cursor: pointer; letter-spacing: 1px; white-space: nowrap;
+      transition: background 0.2s;
+    }
+    .btn-copy:hover { background: var(--green-dim); }
+    .btn-copy.copied { color: var(--text); }
+
+    /* ── Log terminal (debug) ──────────────────────────────────────────── */
+    .log-terminal {
+      width: 100%; max-width: 480px;
+      background: var(--surface); border: 1px solid var(--border);
+      border-radius: 4px; padding: 12px 14px;
+      max-height: 120px; overflow-y: auto;
+      font-size: 10px; color: var(--muted); letter-spacing: 0.5px;
+      line-height: 1.8;
+    }
+    .log-entry { display: flex; gap: 8px; }
+    .log-time  { color: var(--border-hi); flex-shrink: 0; }
+    .log-msg.ok  { color: var(--green); }
+    .log-msg.err { color: var(--red); }
+    .log-msg.info{ color: var(--muted); }
+
+    /* ── Footer ────────────────────────────────────────────────────────── */
+    footer {
+      padding: 16px 28px;
+      border-top: 1px solid var(--border);
+      display: flex; justify-content: space-between; align-items: center;
+      font-size: 10px; color: var(--muted); letter-spacing: 1px;
+    }
+
+    /* ── Connecting spinner ────────────────────────────────────────────── */
+    .spinner {
+      width: 40px; height: 40px; margin: 0 auto;
+      border: 2px solid var(--border-hi);
+      border-top-color: var(--green);
+      border-radius: 50%;
+      animation: spin 0.7s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    /* ── Scrollbar ─────────────────────────────────────────────────────── */
+    ::-webkit-scrollbar { width: 4px; }
+    ::-webkit-scrollbar-track { background: var(--bg); }
+    ::-webkit-scrollbar-thumb { background: var(--border-hi); border-radius: 2px; }
+
+    /* ── Responsive ────────────────────────────────────────────────────── */
+    @media (max-width: 480px) {
+      header { padding: 14px 16px; }
+      main { padding: 20px 12px; }
+      .waiting-title { font-size: 22px; }
+      .session-badge .code { font-size: 22px; }
+    }
+  </style>
+</head>
+<body>
+<div class="app">
+
+  <!-- ── Header ───────────────────────────────────────────────────────── -->
+  <header>
+    <div class="logo">
+      <div class="logo-hex"></div>
+      DROP<span>ZONE</span>
+    </div>
+    <div class="header-tag">RECEIVER</div>
+  </header>
+
+  <!-- ── Main ─────────────────────────────────────────────────────────── -->
+  <main>
+
+    <!-- SCREEN 1: Connecting to server -->
+    <div class="screen active" id="screen-connecting">
+      <div class="spinner"></div>
+      <div style="font-size:13px;color:var(--muted);letter-spacing:2px;">CONNECTING TO SERVER...</div>
+    </div>
+
+    <!-- SCREEN 2: Waiting for sender to scan -->
+    <div class="screen" id="screen-waiting">
+      <div class="waiting-title">Show this <span>QR</span><br/>to the sender</div>
+      <div class="waiting-sub">Sender scans with DropZone app</div>
+
+      <!-- QR Code -->
+      <div class="qr-wrap" id="qr-container">
+        <div class="qr-corner tl"></div>
+        <div class="qr-corner tr"></div>
+        <div class="qr-corner bl"></div>
+        <div class="qr-corner br"></div>
+        <canvas id="qr-canvas" style="display:none"></canvas>
+      </div>
+
+      <div class="card" style="gap:16px;display:flex;flex-direction:column;">
+        <!-- Session ID -->
+        <div class="session-badge">
+          <div class="label">SESSION ID</div>
+          <div class="code" id="session-code">------</div>
+        </div>
+
+        <!-- Timer -->
+        <div class="timer-row">
+          <div class="timer-label">⏱ EXPIRES IN</div>
+          <div class="timer-value" id="timer-display">10:00</div>
+        </div>
+        <div class="progress-track">
+          <div class="progress-fill" id="timer-bar" style="width:100%"></div>
+        </div>
+
+        <!-- Status -->
+        <div class="status-row">
+          <div class="status-dot">
+            <div class="dot on" id="dot-server"></div>
+            SERVER
+          </div>
+          <div class="status-dot">
+            <div class="dot off" id="dot-sender"></div>
+            SENDER
+          </div>
+        </div>
+      </div>
+
+      <!-- Copy URL -->
+      <div class="url-row" id="url-row">
+        <span class="url-text" id="url-display"></span>
+        <button class="btn-copy" id="btn-copy" onclick="copyUrl()">COPY</button>
+      </div>
+    </div>
+
+    <!-- SCREEN 3: Receiving file -->
+    <div class="screen" id="screen-receiving">
+      <div class="receive-title">⬇ RECEIVING FILE</div>
+
+      <div class="card">
+        <!-- File info -->
+        <div class="file-info-box" id="recv-file-info">
+          <div class="file-ext-badge" id="recv-file-ext">---</div>
+          <div>
+            <div class="file-name" id="recv-file-name">Waiting...</div>
+            <div class="file-size" id="recv-file-size"></div>
+          </div>
+        </div>
+
+        <!-- Progress -->
+        <div class="transfer-progress-wrap" style="margin-top:20px;">
+          <div class="transfer-top">
+            <div class="transfer-pct" id="recv-pct">0%</div>
+            <div class="transfer-speed" id="recv-speed"></div>
+          </div>
+          <div class="big-progress-track">
+            <div class="big-progress-fill" id="recv-bar" style="width:0%"></div>
+          </div>
+          <div class="bytes-row">
+            <span id="recv-bytes-done">0 B</span>
+            <span id="recv-bytes-total"></span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- SCREEN 4: Done / Download ready -->
+    <div class="screen" id="screen-done">
+      <div class="done-icon">✓</div>
+      <div class="done-title">FILE RECEIVED</div>
+      <div class="done-sub" id="done-sub">Download started automatically</div>
+
+      <div class="done-files" id="done-files-list"></div>
+
+      <button class="btn btn-primary btn-full" id="btn-download-again" onclick="downloadAgain()" style="display:none;">
+        ⬇ DOWNLOAD AGAIN
+      </button>
+
+      <button class="btn btn-ghost btn-full" onclick="startNewSession()">
+        ← RECEIVE ANOTHER FILE
+      </button>
+    </div>
+
+    <!-- SCREEN 5: Error -->
+    <div class="screen" id="screen-error">
+      <div class="error-icon" id="error-icon">❌</div>
+      <div class="error-title" id="error-title">ERROR</div>
+      <div class="error-msg" id="error-msg">Something went wrong.</div>
+      <button class="btn btn-ghost btn-full" onclick="startNewSession()">TRY AGAIN</button>
+    </div>
+
+    <!-- Log terminal -->
+    <div class="log-terminal" id="log-terminal"></div>
+
+  </main>
+
+  <!-- ── Footer ────────────────────────────────────────────────────────── -->
+  <footer>
+    <span>DROPZONE · ANONYMOUS TRANSFER</span>
+    <span>NO DATA STORED · 10 MIN SESSIONS</span>
+  </footer>
+</div>
+
+<script>window.DROPZONE_SERVER = 'https://dropzon.duckdns.org';</script>
+<!-- QR Code library (reliable fork) -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js" onerror="window._qrLibFailed=true"></script>
+
+<script>
+// ── Config ──────────────────────────────────────────────────────────────────
+// Change this to your server URL
+const SERVER_URL     = window.DROPZONE_SERVER || 'http://localhost:8000';
+const SESSION_TTL    = 10 * 60; // 10 minutes
+
+// ── State ────────────────────────────────────────────────────────────────────
+let sessionId        = null;
+let websocket        = null;
+let timerInterval    = null;
+let timeLeft         = SESSION_TTL;
+let fileBuffer       = [];   // accumulate binary chunks
+let fileInfo         = null; // { name, size, type }
+let bytesReceived    = 0;
+let transferStart    = null;
+let lastBytesReceived = 0;
+let lastSpeedTime    = 0;
+let completedFiles   = [];
+let downloadUrl      = null;
+
+// ── Screen manager ───────────────────────────────────────────────────────────
+function showScreen(id) {
+  document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
+  const el = document.getElementById('screen-' + id);
+  if (el) { el.classList.add('active'); }
+}
+
+// ── Logger ───────────────────────────────────────────────────────────────────
+function log(msg, type = 'info') {
+  const term = document.getElementById('log-terminal');
+  const now  = new Date();
+  const time = `${String(now.getHours()).padStart(2,'0')}:${String(now.getMinutes()).padStart(2,'0')}:${String(now.getSeconds()).padStart(2,'0')}`;
+  const row  = document.createElement('div');
+  row.className = 'log-entry';
+  row.innerHTML = `<span class="log-time">${time}</span><span class="log-msg ${type}">${msg}</span>`;
+  term.appendChild(row);
+  term.scrollTop = term.scrollHeight;
+  console.log(`[${type}] ${msg}`);
+}
+
+// ── Create session ────────────────────────────────────────────────────────────
+async function createSession() {
+  showScreen('connecting');
+  log('Requesting session from server...', 'info');
+
+  try {
+    const res = await fetch(`${SERVER_URL}/session`, { method: 'POST' });
+    if (!res.ok) throw new Error(`Server error: ${res.status}`);
+
+    const data = await res.json();
+    sessionId = data.session_id;
+    timeLeft  = SESSION_TTL;
+
+    log(`Session created: ${sessionId}`, 'ok');
+
+    renderQR(data.qr_image, data.qr_payload, sessionId);
+    startTimer();
+    connectWebSocket(data.receiver_ws);
+
+  } catch (err) {
+    log(`Failed to create session: ${err.message}`, 'err');
+    showError('SERVER UNREACHABLE', `Cannot connect to DropZone server.\n\nMake sure the backend is running at:\n${SERVER_URL}`);
+  }
+}
+
+// ── QR Code render ────────────────────────────────────────────────────────────
+function renderQR(qrImage, qrPayload, id) {
+  document.getElementById('session-code').textContent = id;
+
+  const container = document.getElementById('qr-container');
+
+  // Remove old canvas/img if re-rendering
+  const old = container.querySelector('canvas, img');
+  if (old) old.remove();
+
+  // Priority 1: use base64 PNG from server (most reliable)
+  if (qrImage && qrImage.startsWith('data:image')) {
+    const img = document.createElement('img');
+    img.src    = qrImage;
+    img.width  = 200;
+    img.height = 200;
+    img.style.display = 'block';
+    container.appendChild(img);
+    log('QR rendered from server image', 'ok');
+
+  // Priority 2: use qrcodejs library with a fresh div
+  } else if (qrPayload) {
+    const div = document.createElement('div');
+    div.id = 'qr-inner';
+    container.appendChild(div);
+    try {
+      new QRCode(div, {
+        text: qrPayload,
+        width: 200, height: 200,
+        colorDark: '#000000', colorLight: '#ffffff',
+        correctLevel: QRCode.CorrectLevel.H
+      });
+      log('QR rendered from payload', 'ok');
+    } catch(e) {
+      log('QR library error: ' + e.message, 'err');
+      renderQRFallback(container, qrPayload, id);
+    }
+
+  } else {
+    renderQRFallback(container, null, id);
+  }
+
+  // Show page URL for sharing
+  const pageUrl = `${window.location.origin}${window.location.pathname}?s=${id}`;
+  document.getElementById('url-display').textContent = pageUrl;
+
+  showScreen('waiting');
+  log('Waiting for sender to scan...', 'info');
+}
+
+// Fallback: show session ID as large text if QR fails
+function renderQRFallback(container, payload, id) {
+  log('QR fallback: showing session code only', 'info');
+  const div = document.createElement('div');
+  div.style.cssText = 'width:200px;height:200px;display:flex;flex-direction:column;align-items:center;justify-content:center;background:#fff;color:#000;font-family:monospace;font-size:12px;text-align:center;padding:12px;';
+  div.innerHTML = `<div style="font-size:10px;color:#666;margin-bottom:8px;">SESSION ID</div>
+                   <div style="font-size:28px;font-weight:bold;letter-spacing:4px;color:#000;">${id}</div>
+                   <div style="font-size:9px;color:#999;margin-top:8px;">Enter in Android app</div>`;
+  container.appendChild(div);
+}
+
+// ── WebSocket connection ──────────────────────────────────────────────────────
+function connectWebSocket(wsUrl) {
+  // If wsUrl not given, build it
+  if (!wsUrl) {
+    const base = SERVER_URL.replace('http://', 'ws://').replace('https://', 'wss://');
+    wsUrl = `${base}/ws/receiver/${sessionId}`;
+  }
+
+  log(`Connecting WS: ${wsUrl}`, 'info');
+
+  websocket = new WebSocket(wsUrl);
+  websocket.binaryType = 'arraybuffer';
+
+  websocket.onopen = () => {
+    log('WebSocket connected', 'ok');
+    document.getElementById('dot-server').classList.add('on');
+    document.getElementById('dot-server').classList.remove('off');
+  };
+
+  websocket.onmessage = (event) => {
+    if (typeof event.data === 'string') {
+      handleTextMessage(JSON.parse(event.data));
+    } else {
+      handleBinaryChunk(event.data);
+    }
+  };
+
+  websocket.onclose = (event) => {
+    log(`WS closed: ${event.reason || 'connection closed'}`, 'info');
+    document.getElementById('dot-server').classList.remove('on');
+    document.getElementById('dot-server').classList.add('off');
+  };
+
+  websocket.onerror = (err) => {
+    log('WebSocket error', 'err');
+  };
+}
+
+// ── Handle JSON messages from server ─────────────────────────────────────────
+function handleTextMessage(msg) {
+  log(`← ${msg.type}`, 'info');
+
+  switch (msg.type) {
+
+    case 'waiting':
+      log(`Session active. ${msg.time_remaining}s remaining`, 'ok');
+      break;
+
+    case 'heartbeat':
+      if (msg.sender_connected) {
+        document.getElementById('dot-sender').classList.add('on');
+        document.getElementById('dot-sender').classList.remove('off');
+      }
+      break;
+
+    case 'sender_connected':
+      log('Sender connected!', 'ok');
+      document.getElementById('dot-sender').classList.add('on');
+      document.getElementById('dot-sender').classList.remove('off');
+      break;
+
+    case 'chunk_start':
+      fileInfo      = { name: msg.file_name, size: msg.file_size, type: msg.file_type };
+      fileBuffer    = [];
+      bytesReceived = 0;
+      transferStart = Date.now();
+      lastSpeedTime = Date.now();
+      lastBytesReceived = 0;
+
+      clearInterval(timerInterval); // Stop session timer during transfer
+
+      // Update UI
+      const ext = msg.file_name.split('.').pop().toUpperCase().slice(0, 5) || 'FILE';
+      document.getElementById('recv-file-ext').textContent  = ext;
+      document.getElementById('recv-file-name').textContent = msg.file_name;
+      document.getElementById('recv-file-size').textContent = formatBytes(msg.file_size);
+      document.getElementById('recv-bytes-total').textContent = formatBytes(msg.file_size);
+      updateTransferProgress(0);
+      showScreen('receiving');
+      log(`Receiving: ${msg.file_name} (${formatBytes(msg.file_size)})`, 'ok');
+      break;
+
+    case 'transfer_complete':
+      log(`Transfer done: ${formatBytes(msg.bytes)}`, 'ok');
+      assembleAndDownload();
+      break;
+
+    case 'expired':
+      showError('SESSION EXPIRED', 'This session has expired.\nPlease go back and start a new session.');
+      clearInterval(timerInterval);
+      break;
+
+    case 'error':
+      showError('TRANSFER ERROR', msg.message || 'An error occurred during transfer.');
+      break;
+  }
+}
+
+// ── Handle binary file chunks ─────────────────────────────────────────────────
+function handleBinaryChunk(data) {
+  fileBuffer.push(data);
+  bytesReceived += data.byteLength;
+
+  // Calculate speed
+  const now = Date.now();
+  const elapsed = now - lastSpeedTime;
+  let speed = '';
+  if (elapsed > 600) {
+    const bytesDelta = bytesReceived - lastBytesReceived;
+    const bps = (bytesDelta / elapsed) * 1000;
+    speed = formatBytes(bps) + '/s';
+    lastSpeedTime = now;
+    lastBytesReceived = bytesReceived;
+  }
+
+  // Update progress
+  if (fileInfo && fileInfo.size > 0) {
+    const pct = Math.min(100, Math.round((bytesReceived / fileInfo.size) * 100));
+    updateTransferProgress(pct, speed);
+  }
+}
+
+function updateTransferProgress(pct, speed = '') {
+  document.getElementById('recv-bar').style.width   = pct + '%';
+  document.getElementById('recv-pct').textContent   = pct + '%';
+  document.getElementById('recv-bytes-done').textContent = formatBytes(bytesReceived);
+  if (speed) document.getElementById('recv-speed').textContent = speed;
+}
+
+// ── Assemble chunks and trigger download ──────────────────────────────────────
+function assembleAndDownload() {
+  if (!fileInfo || fileBuffer.length === 0) return;
+
+  log(`Assembling ${fileBuffer.length} chunks...`, 'info');
+
+  const blob = new Blob(fileBuffer, { type: fileInfo.type || 'application/octet-stream' });
+  downloadUrl = URL.createObjectURL(blob);
+
+  // Auto-download
+  const a = document.createElement('a');
+  a.href     = downloadUrl;
+  a.download = fileInfo.name;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+
+  // Track completed files
+  completedFiles.push({ name: fileInfo.name, size: fileInfo.size, url: downloadUrl });
+
+  log(`Download triggered: ${fileInfo.name}`, 'ok');
+  showDoneScreen();
+}
+
+// ── Done screen ───────────────────────────────────────────────────────────────
+function showDoneScreen() {
+  const list = document.getElementById('done-files-list');
+  list.innerHTML = '';
+
+  completedFiles.forEach(f => {
+    const row = document.createElement('div');
+    row.className = 'done-file-row';
+    row.innerHTML = `
+      <div class="done-file-info">
+        <div class="done-file-name">${escHtml(f.name)}</div>
+        <div class="done-file-size">${formatBytes(f.size)}</div>
+      </div>
+      <a href="${f.url}" download="${escHtml(f.name)}" class="btn btn-ghost" style="padding:6px 14px;font-size:11px;">⬇</a>
+    `;
+    list.appendChild(row);
+  });
+
+  document.getElementById('done-sub').textContent =
+    `${completedFiles.length} file${completedFiles.length > 1 ? 's' : ''} received successfully`;
+
+  if (completedFiles.length === 1) {
+    document.getElementById('btn-download-again').style.display = 'flex';
+  }
+
+  showScreen('done');
+}
+
+// ── Error screen ──────────────────────────────────────────────────────────────
+function showError(title, msg) {
+  document.getElementById('error-icon').textContent  = title.includes('EXPIRED') ? '⏰' : '❌';
+  document.getElementById('error-title').textContent = title;
+  document.getElementById('error-msg').textContent   = msg;
+  showScreen('error');
+}
+
+// ── Timer ─────────────────────────────────────────────────────────────────────
+function startTimer() {
+  timeLeft = SESSION_TTL;
+  clearInterval(timerInterval);
+
+  timerInterval = setInterval(() => {
+    timeLeft--;
+
+    const m   = String(Math.floor(timeLeft / 60)).padStart(2, '0');
+    const s   = String(timeLeft % 60).padStart(2, '0');
+    const pct = (timeLeft / SESSION_TTL) * 100;
+
+    const display = document.getElementById('timer-display');
+    const bar     = document.getElementById('timer-bar');
+    const fill    = document.getElementById('progress-fill');
+
+    display.textContent = `${m}:${s}`;
+    bar.style.width = pct + '%';
+
+    if (timeLeft <= 60) {
+      display.classList.add('warn');
+      bar.classList.add('warn');
+    }
+
+    if (timeLeft <= 0) {
+      clearInterval(timerInterval);
+      showError('SESSION EXPIRED', 'This session has expired. Please start a new session.');
+    }
+  }, 1000);
+}
+
+// ── Actions ───────────────────────────────────────────────────────────────────
+function downloadAgain() {
+  if (completedFiles.length === 1) {
+    const f = completedFiles[0];
+    const a = document.createElement('a');
+    a.href = f.url; a.download = f.name;
+    a.click();
+  }
+}
+
+function startNewSession() {
+  clearInterval(timerInterval);
+  if (websocket) { websocket.close(); websocket = null; }
+  completedFiles = [];
+  fileBuffer = [];
+  fileInfo = null;
+  bytesReceived = 0;
+  downloadUrl = null;
+  createSession();
+}
+
+function copyUrl() {
+  const url = document.getElementById('url-display').textContent;
+  navigator.clipboard.writeText(url).then(() => {
+    const btn = document.getElementById('btn-copy');
+    btn.textContent = 'COPIED ✓';
+    btn.classList.add('copied');
+    setTimeout(() => { btn.textContent = 'COPY'; btn.classList.remove('copied'); }, 2000);
+  });
+}
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
+function formatBytes(b) {
+  if (!b || b === 0) return '0 B';
+  if (b < 1024)           return `${b} B`;
+  if (b < 1024 * 1024)    return `${(b / 1024).toFixed(1)} KB`;
+  return `${(b / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function escHtml(s) {
+  return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+// ── Boot ──────────────────────────────────────────────────────────────────────
+window.addEventListener('DOMContentLoaded', () => {
+  log('DropZone receiver initializing...', 'info');
+  createSession();
+});
+</script>
+</body>
+</html>
