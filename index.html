@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8"/>
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-  <title>DropZone — Receive File</title>
+  <title>DropZone — Transfer Files</title>
   <link rel="preconnect" href="https://fonts.googleapis.com"/>
   <link href="https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=Syne:wght@400;700;800&display=swap" rel="stylesheet"/>
 
@@ -347,6 +347,27 @@
     .btn-copy:hover { background: var(--green-dim); }
     .btn-copy.copied { color: var(--text); }
 
+    /* ── Send-to-phone panel ─────────────────────────────────────────── */
+    .send-panel {
+      display: flex; flex-direction: column; gap: 10px;
+      width: 100%; max-width: 480px;
+    }
+    .send-panel-title {
+      font-size: 11px; color: var(--muted); letter-spacing: 2px; text-transform: uppercase;
+    }
+    .file-chooser {
+      display: flex; align-items: center; gap: 10px;
+      background: var(--surface); border: 1px solid var(--border-hi);
+      border-radius: 4px; padding: 10px 12px;
+    }
+    .file-chooser input[type=file] { display: none; }
+    .chosen-file-name {
+      flex: 1; font-size: 11px; color: var(--muted);
+      overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    }
+    .btn-disabled { opacity: 0.4; cursor: not-allowed; }
+    .btn-disabled:hover { transform: none; box-shadow: none; }
+
     /* ── Log terminal (debug) ──────────────────────────────────────────── */
     .log-terminal {
       width: 100%; max-width: 480px;
@@ -403,7 +424,7 @@
       <div class="logo-hex"></div>
       DROP<span>ZONE</span>
     </div>
-    <div class="header-tag">RECEIVER</div>
+    <div class="header-tag">TWO-WAY TRANSFER</div>
   </header>
 
   <!-- ── Main ─────────────────────────────────────────────────────────── -->
@@ -463,6 +484,24 @@
         <span class="url-text" id="url-display"></span>
         <button class="btn-copy" id="btn-copy" onclick="copyUrl()">COPY</button>
       </div>
+
+      <!-- Send a file back to the phone -->
+      <div class="send-panel">
+        <div class="send-panel-title">↑ Or send a file to the phone</div>
+        <div class="file-chooser">
+          <label class="btn btn-ghost" style="padding:8px 14px;font-size:11px;">
+            CHOOSE FILE
+            <input type="file" id="file-input" onchange="onFileChosen(event)"/>
+          </label>
+          <span class="chosen-file-name" id="chosen-file-name">No file chosen</span>
+        </div>
+        <button class="btn btn-primary btn-full btn-disabled" id="btn-send-to-phone" onclick="sendToPhone()" disabled>
+          SEND TO PHONE
+        </button>
+        <div style="font-size:10px;color:var(--muted);text-align:center;" id="send-hint">
+          Waiting for phone to connect...
+        </div>
+      </div>
     </div>
 
     <!-- SCREEN 3: Receiving file -->
@@ -494,6 +533,42 @@
           </div>
         </div>
       </div>
+    </div>
+
+    <!-- SCREEN 3b: Sending file to phone -->
+    <div class="screen" id="screen-sending">
+      <div class="receive-title">↑ SENDING TO PHONE</div>
+
+      <div class="card">
+        <div class="file-info-box">
+          <div class="file-ext-badge" id="send-file-ext">---</div>
+          <div>
+            <div class="file-name" id="send-file-name"></div>
+            <div class="file-size" id="send-file-size"></div>
+          </div>
+        </div>
+
+        <div class="transfer-progress-wrap" style="margin-top:20px;">
+          <div class="transfer-top">
+            <div class="transfer-pct" id="send-pct">0%</div>
+            <div class="transfer-speed" id="send-speed"></div>
+          </div>
+          <div class="big-progress-track">
+            <div class="big-progress-fill" id="send-bar" style="width:0%"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- SCREEN 3c: Sent confirmation -->
+    <div class="screen" id="screen-sent">
+      <div class="done-icon">✓</div>
+      <div class="done-title">FILE SENT</div>
+      <div class="done-sub" id="sent-sub">Delivered to the phone</div>
+
+      <button class="btn btn-ghost btn-full" onclick="showScreen('waiting')">
+        ← BACK
+      </button>
     </div>
 
     <!-- SCREEN 4: Done / Download ready -->
@@ -556,6 +631,8 @@ let lastBytesReceived = 0;
 let lastSpeedTime    = 0;
 let completedFiles   = [];
 let downloadUrl      = null;
+let peerConnected    = false;
+let outgoingFile     = null;
 
 // ── Screen manager ───────────────────────────────────────────────────────────
 function showScreen(id) {
@@ -712,16 +789,22 @@ function handleTextMessage(msg) {
       break;
 
     case 'heartbeat':
-      if (msg.sender_connected) {
-        document.getElementById('dot-sender').classList.add('on');
-        document.getElementById('dot-sender').classList.remove('off');
-      }
+      setPeerConnected(!!msg.peer_connected);
       break;
 
-    case 'sender_connected':
-      log('Sender connected!', 'ok');
-      document.getElementById('dot-sender').classList.add('on');
-      document.getElementById('dot-sender').classList.remove('off');
+    case 'peer_connected':
+      log('Phone connected!', 'ok');
+      setPeerConnected(true);
+      break;
+
+    case 'peer_disconnected':
+      log('Phone disconnected', 'info');
+      setPeerConnected(false);
+      break;
+
+    case 'peer_missing':
+      log('Phone not connected yet', 'err');
+      document.getElementById('send-hint').textContent = 'Phone not connected yet — scan the QR on the phone first.';
       break;
 
     case 'chunk_start':
@@ -759,6 +842,94 @@ function handleTextMessage(msg) {
       showError('TRANSFER ERROR', msg.message || 'An error occurred during transfer.');
       break;
   }
+}
+
+// ── Peer connection state (drives the "send to phone" button) ────────────────
+function setPeerConnected(connected) {
+  peerConnected = connected;
+  document.getElementById('dot-sender').classList.toggle('on', connected);
+  document.getElementById('dot-sender').classList.toggle('off', !connected);
+
+  const btn = document.getElementById('btn-send-to-phone');
+  const canSend = connected && outgoingFile;
+  btn.disabled = !canSend;
+  btn.classList.toggle('btn-disabled', !canSend);
+
+  document.getElementById('send-hint').textContent = connected
+    ? (outgoingFile ? '' : 'Choose a file to send it to the phone.')
+    : 'Waiting for phone to connect...';
+}
+
+// ── Sending a file to the phone ───────────────────────────────────────────────
+function onFileChosen(event) {
+  outgoingFile = event.target.files[0] || null;
+  document.getElementById('chosen-file-name').textContent = outgoingFile ? outgoingFile.name : 'No file chosen';
+  setPeerConnected(peerConnected); // refresh button state
+}
+
+function sleep(ms) { return new Promise(resolve => setTimeout(resolve, ms)); }
+
+async function sendToPhone() {
+  if (!outgoingFile || !websocket || websocket.readyState !== WebSocket.OPEN || !peerConnected) return;
+
+  const file = outgoingFile;
+  const CHUNK_SIZE = 65536;
+
+  showScreen('sending');
+  const ext = (file.name.split('.').pop() || 'FILE').toUpperCase().slice(0, 5);
+  document.getElementById('send-file-ext').textContent  = ext;
+  document.getElementById('send-file-name').textContent = file.name;
+  document.getElementById('send-file-size').textContent = formatBytes(file.size);
+  document.getElementById('send-bar').style.width = '0%';
+  document.getElementById('send-pct').textContent = '0%';
+  document.getElementById('send-speed').textContent = '';
+
+  log(`Sending to phone: ${file.name} (${formatBytes(file.size)})`, 'info');
+
+  websocket.send(JSON.stringify({
+    type: 'file_info',
+    file_name: file.name,
+    file_size: file.size,
+    file_type: file.type || 'application/octet-stream'
+  }));
+
+  await sleep(150); // give the server/phone a moment to set up before the flood of chunks
+
+  let offset = 0;
+  let lastTime = Date.now();
+  let lastBytes = 0;
+
+  while (offset < file.size) {
+    const slice = file.slice(offset, offset + CHUNK_SIZE);
+    const buf = await slice.arrayBuffer();
+    websocket.send(buf);
+    offset += buf.byteLength;
+
+    const now = Date.now();
+    const elapsed = now - lastTime;
+    if (elapsed > 400) {
+      const speed = formatBytes(((offset - lastBytes) * 1000) / elapsed) + '/s';
+      document.getElementById('send-speed').textContent = speed;
+      lastTime = now;
+      lastBytes = offset;
+    }
+
+    const pct = Math.round((offset / file.size) * 100);
+    document.getElementById('send-bar').style.width = pct + '%';
+    document.getElementById('send-pct').textContent = pct + '%';
+
+    await sleep(4); // yield so the UI repaints and the socket buffer can drain
+  }
+
+  websocket.send(JSON.stringify({ type: 'transfer_done' }));
+  log(`Sent: ${file.name}`, 'ok');
+
+  document.getElementById('sent-sub').textContent = `${file.name} delivered to the phone`;
+  showScreen('sent');
+
+  outgoingFile = null;
+  document.getElementById('file-input').value = '';
+  document.getElementById('chosen-file-name').textContent = 'No file chosen';
 }
 
 // ── Handle binary file chunks ─────────────────────────────────────────────────
@@ -901,6 +1072,10 @@ function startNewSession() {
   fileInfo = null;
   bytesReceived = 0;
   downloadUrl = null;
+  outgoingFile = null;
+  peerConnected = false;
+  document.getElementById('file-input').value = '';
+  document.getElementById('chosen-file-name').textContent = 'No file chosen';
   createSession();
 }
 
